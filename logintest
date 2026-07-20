@@ -1,0 +1,156 @@
+formulario.tsx
+
+"use client";
+import { useActionState, useState } from "react";
+import { login, type LoginState } from "@/lib/auth-actions";
+
+export function FormularioLogin({ proximo }: { proximo?: string }) {
+  const [state, action, pending] = useActionState<LoginState, FormData>(
+    login,
+    {}
+  );
+  const [mostrarSenha, setMostrarSenha] = useState(false);
+
+  return (
+    <form action={action} className="space-y-[18px]" style={{ fontFamily: "var(--font-inter)" }}>
+      {proximo ? <input type="hidden" name="proximo" value={proximo} /> : null}
+
+      <div>
+        <label
+          className="mb-1.5 block text-[13px] font-semibold tracking-[0.2px] text-[#0f5c37]"
+          htmlFor="email"
+        >
+          E-mail
+        </label>
+        <div className="flex items-center overflow-hidden rounded-lg border border-[#dcdfe2] bg-[#f6f8f7] transition-colors focus-within:border-[#198450] focus-within:bg-white focus-within:ring-[3px] focus-within:ring-[#198450]/10">
+          <input
+            className="min-w-0 flex-1 border-0 bg-transparent px-3.5 py-3 text-[15px] text-[#333333] outline-none placeholder:text-[#9aa1a0]"
+            id="email"
+            name="email"
+            type="email"
+            autoComplete="username"
+            required
+          />
+        </div>
+      </div>
+
+      <div>
+        <label
+          className="mb-1.5 block text-[13px] font-semibold tracking-[0.2px] text-[#0f5c37]"
+          htmlFor="senha"
+        >
+          Senha
+        </label>
+        <div className="flex items-center overflow-hidden rounded-lg border border-[#dcdfe2] bg-[#f6f8f7] transition-colors focus-within:border-[#198450] focus-within:bg-white focus-within:ring-[3px] focus-within:ring-[#198450]/10">
+          <input
+            className="min-w-0 flex-1 border-0 bg-transparent px-3.5 py-3 text-[15px] text-[#333333] outline-none placeholder:text-[#9aa1a0]"
+            id="senha"
+            name="senha"
+            type={mostrarSenha ? "text" : "password"}
+            autoComplete="current-password"
+            minLength={13}
+            maxLength={13}
+            required
+          />
+          <button
+            type="button"
+            className="flex h-full items-center justify-center border-l border-[#dcdfe2] px-3.5 text-[#8a938f] transition-colors hover:text-[#198450]"
+            onClick={() => setMostrarSenha((v) => !v)}
+            aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
+            aria-pressed={mostrarSenha}
+          >
+            {mostrarSenha ? (
+              <svg
+                className="h-5 w-5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a20.3 20.3 0 0 1 4.22-5.44M9.9 4.24A10.4 10.4 0 0 1 12 4c7 0 11 8 11 8a20.5 20.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                <line x1="1" y1="1" x2="23" y2="23" />
+              </svg>
+            ) : (
+              <svg
+                className="h-5 w-5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {state.erro ? (
+        <p className="text-sm text-red-600" role="alert">
+          {state.erro}
+        </p>
+      ) : null}
+
+      <button
+        className="mt-2 w-full rounded-lg bg-[#198450] py-[13px] text-[16px] font-semibold text-white transition-colors hover:bg-[#0f5c37] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-70"
+        disabled={pending}
+      >
+        {pending ? "Entrando…" : "Entrar"}
+      </button>
+    </form>
+  );
+}
+
+page.tsx
+
+import { Suspense } from "react";
+import { Poppins, Inter } from "next/font/google";
+import { FormularioLogin } from "./formulario";
+
+export const metadata = { title: "Entrar" };
+
+const poppins = Poppins({
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+  variable: "--font-poppins",
+});
+
+const inter = Inter({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-inter",
+});
+
+export default async function PaginaLogin(props: {
+  searchParams: Promise<{ proximo?: string }>;
+}) {
+  const { proximo } = await props.searchParams;
+
+  return (
+    <main
+      className={`${poppins.variable} ${inter.variable} flex flex-1 items-center justify-center bg-[#cbf5dd] p-4`}
+    >
+      <div className="w-full max-w-sm rounded-[14px] border border-[#198450]/10 bg-white px-9 py-10 shadow-[0_0_24px_rgba(15,92,55,0.16)]">
+        <img
+          src="https://cacula.vtexassets.com/assets/vtex/assets-builder/cacula.storetheme/3.0.29/svgs/logo___36d5771bfffa117d6501635b8bc093ab.svg"
+          alt="Caçula logo"
+          className="mx-auto mb-2 h-auto w-[200px]"
+        />
+        <h1
+          className="mb-7 text-center text-2xl font-semibold text-[#0f5c37]"
+          style={{ fontFamily: "var(--font-poppins)" }}
+        >
+          Acesse sua conta
+        </h1>
+        <Suspense>
+          <FormularioLogin proximo={proximo} />
+        </Suspense>
+      </div>
+    </main>
+  );
+}
