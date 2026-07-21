@@ -1,0 +1,286 @@
+Acabei de atualizar o arquivo de server actions dos SKUs (actions.ts, ou o nome equivalente na
+pasta de cadastros de produtos) com as seguintes mudanças. Preciso que você propague essas
+mudanças para o resto do projeto.
+
+ARQUIVO JÁ ATUALIZADO (localize o arquivo original com as actions "salvarSku", "excluirSku" e
+"importarSkusCsv" — provavelmente em algo como app/cadastros/skus/actions.ts — e substitua pelo
+conteúdo abaixo, revisando os imports de @/lib/db, @/lib/session, @/lib/util e @/lib/csv para
+garantir que continuam batendo com o restante do projeto):
+
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { db } from "@/lib/db";
+import { exigirComprador } from "@/lib/session";
+import { texto, textoOuNull, parseDecimalBr, parseIntOrNull } from "@/lib/util";
+import { lerCsv, numeroBr } from "@/lib/csv";
+
+// ---------------------------------------------------------------------------
+// Tipos de retorno padronizados (antes: void, sem feedback de erro na UI)
+// ---------------------------------------------------------------------------
+export interface ResultadoAcaoSku {
+  sucesso: boolean;
+  mensagem?: string;
+}
+
+export async function salvarSku(
+  _prev: ResultadoAcaoSku,
+  formData: FormData
+): Promise<ResultadoAcaoSku> {
+  await exigirComprador();
+  const id = texto(formData.get("id"));
+
+  const codigo = texto(formData.get("codigo")).trim();
+  const descricao = texto(formData.get("descricao")).trim();
+
+  if (!codigo || !descricao) {
+    return { sucesso: false, mensagem: "Preencha os campos obrigatórios: código e descrição." };
+  }
+
+  const dados = {
+    codigo,
+    descricao,
+    grupo: textoOuNull(formData.get("grupo")),
+    categoria: textoOuNull(formData.get("categoria")),
+    fabricante: textoOuNull(formData.get("fabricante")),
+    codigoBarras: textoOuNull(formData.get("codigoBarras")),
+    unidLarguraCm: parseDecimalBr(formData.get("unidLarguraCm")),
+    unidAlturaCm: parseDecimalBr(formData.get("unidAlturaCm")),
+    unidProfundidadeCm: parseDecimalBr(formData.get("unidProfundidadeCm")),
+    // Antes ausentes aqui: só eram gravados via importação CSV.
+    atacadoLarguraCm: parseDecimalBr(formData.get("atacadoLarguraCm")),
+    atacadoAlturaCm: parseDecimalBr(formData.get("atacadoAlturaCm")),
+    atacadoProfundidadeCm: parseDecimalBr(formData.get("atacadoProfundidadeCm")),
+    unidadesPorAtacado: parseIntOrNull(formData.get("unidadesPorAtacado")),
+  };
+
+  try {
+    if (id) {
+      await db.sku.update({ where: { id }, data: dados });
+    } else {
+      await db.sku.upsert({
+        where: { codigo: dados.codigo },
+        update: dados,
+        create: dados,
+      });
+    }
+  } catch (e) {
+    return {
+      sucesso: false,
+      mensagem: e instanceof Error ? `Erro ao salvar: ${e.message}` : "Erro desconhecido ao salvar o SKU.",
+    };
+  }
+
+  revalidatePath("/cadastros/skus");
+  return { sucesso: true };
+}
+
+export async function excluirSku(
+  _prev: ResultadoAcaoSku,
+  formData: FormData
+): Promise<ResultadoAcaoSku> {
+  await exigirComprador();
+  const id = texto(formData.get("id"));
+  if (!id) {
+    return { sucesso: false, mensagem: "SKU inválido." };
+  }
+
+  const [emUso, comVendas] = await Promise.all([
+    db.croquiItem.count({ where: { skuId: id } }),
+    db.vendaMensal.count({ where: { skuId: id } }),
+  ]);
+
+  if (emUso > 0 || comVendas > 0) {
+    return {
+      sucesso: false,
+      mensagem: `Não é possível excluir: usado em ${emUso} croqui(s) e ${comVendas} lançamento(s) de venda.`,
+    };
+  }
+
+  try {
+    await db.sku.delete({ where: { id } });
+  } catch (e) {
+    return {
+      sucesso: false,
+      mensagem: e instanceof Error ? `Erro ao excluir: ${e.message}` : "Erro desconhecido ao excluir o SKU.",
+    };
+  }
+
+  revalidatePath("/cadastros/skus");
+  return { sucesso: true };
+}
+
+export interface ResultadoImportacaoSku {
+  ok: number;
+  erros: { linha: number; motivo: string }[];
+  totalErros: number;
+  processado: boolean;
+}
+
+// Colunas reconhecidas (nomes normalizados): codigo, descricao, grupo,
+// categoria, fabricante, codigo_barras, unid_largura_cm, unid_altura_cm,
+// unid_profundidade_cm, atacado_largura_cm, atacado_altura_cm,
+// atacado_profundidade_cm, unidades_por_atacado
+export async function importarSkusCsv(
+  _prev: ResultadoImportacaoSku,
+  formData: FormData
+): Promise<ResultadoImportacaoSku> {
+  await exigirComprador();
+  const arquivo = formData.get("arquivo");
+  if (!(arquivo instanceof File) || arquivo.size === 0) {
+    return {
+      ok: 0,
+      erros: [{ linha: 0, motivo: "Selecione um arquivo CSV." }],
+      totalErros: 1,
+      processado: true,
+    };
+  }
+
+  const buffer = Buffer.from(await arquivo.arrayBuffer());
+  const { cabecalho, linhas } = lerCsv(buffer);
+
+  const col = (nome: string) => cabecalho.indexOf(nome);
+  const iCodigo = col("codigo");
+  const iDescricao = col("descricao");
+  if (iCodigo < 0 || iDescricao < 0) {
+    return {
+      ok: 0,
+      erros: [
+        {
+          linha: 1,
+          motivo: `Cabeçalho precisa conter as colunas "codigo" e "descricao". Encontrado: ${cabecalho.join(", ")}`,
+        },
+      ],
+      totalErros: 1,
+      processado: true,
+    };
+  }
+
+  const campo = (linha: string[], nome: string): string | undefined => {
+    const i = col(nome);
+    return i >= 0 ? linha[i] : undefined;
+  };
+
+  let ok = 0;
+  const erros: { linha: number; motivo: string }[] = [];
+  // Rastreia códigos já vistos no próprio arquivo para avisar sobre
+  // duplicidade interna (o upsert faz a última ocorrência prevalecer).
+  const codigosVistos = new Map<string, number>();
+
+  for (let n = 0; n < linhas.length; n++) {
+    const linha = linhas[n];
+    const numLinha = n + 2; // 1-indexado + cabeçalho
+    const codigo = (linha[iCodigo] ?? "").trim();
+    const descricao = (linha[iDescricao] ?? "").trim();
+    if (!codigo) {
+      erros.push({ linha: numLinha, motivo: "Código vazio" });
+      continue;
+    }
+
+    const primeiraOcorrencia = codigosVistos.get(codigo);
+    if (primeiraOcorrencia) {
+      erros.push({
+        linha: numLinha,
+        motivo: `Código duplicado neste arquivo (já apareceu na linha ${primeiraOcorrencia}); esta linha sobrescreveu a anterior.`,
+      });
+    }
+    codigosVistos.set(codigo, numLinha);
+
+    try {
+      const dados = {
+        descricao: descricao || codigo,
+        grupo: campo(linha, "grupo") || null,
+        categoria: campo(linha, "categoria") || null,
+        fabricante: campo(linha, "fabricante") || null,
+        codigoBarras: campo(linha, "codigo_barras") || null,
+        unidLarguraCm: numeroBr(campo(linha, "unid_largura_cm")),
+        unidAlturaCm: numeroBr(campo(linha, "unid_altura_cm")),
+        unidProfundidadeCm: numeroBr(campo(linha, "unid_profundidade_cm")),
+        atacadoLarguraCm: numeroBr(campo(linha, "atacado_largura_cm")),
+        atacadoAlturaCm: numeroBr(campo(linha, "atacado_altura_cm")),
+        atacadoProfundidadeCm: numeroBr(campo(linha, "atacado_profundidade_cm")),
+        unidadesPorAtacado: (() => {
+          const v = numeroBr(campo(linha, "unidades_por_atacado"));
+          return v == null ? null : Math.round(v);
+        })(),
+      };
+      await db.sku.upsert({
+        where: { codigo },
+        update: dados,
+        create: { codigo, ...dados },
+      });
+      ok++;
+    } catch (e) {
+      erros.push({
+        linha: numLinha,
+        motivo: e instanceof Error ? e.message : "Erro desconhecido",
+      });
+    }
+  }
+
+  revalidatePath("/cadastros/skus");
+  return { ok, erros: erros.slice(0, 50), totalErros: erros.length, processado: true };
+}
+
+MUDANÇAS DE ASSINATURA QUE PRECISAM SER PROPAGADAS:
+
+1. `salvarSku` e `excluirSku` deixaram de retornar `void` e agora retornam
+   `Promise<ResultadoAcaoSku>` (interface `{ sucesso: boolean; mensagem?: string }`), recebendo
+   `(_prev: ResultadoAcaoSku, formData: FormData)` como parâmetros — igual ao padrão que
+   `importarSkusCsv` já usa com `useActionState`.
+
+   Ajuste o(s) componente(s) client que usam esses forms para:
+   - Trocar `<form action={salvarSku}>` / `<form action={excluirSku}>` por
+     `useActionState(salvarSku, { sucesso: false })` (e o mesmo para excluirSku), extraindo
+     `[estado, formAction, pending]` do hook.
+   - Exibir `estado.mensagem` como erro (ex: um Alert/Toast) quando `estado.sucesso === false`
+     e houver mensagem.
+   - Desabilitar o botão de submit enquanto `pending === true`.
+   - Procure no projeto por outros lugares que chamem `salvarSku` ou `excluirSku` diretamente
+     (fora de <form action>, ex: chamadas programáticas) e ajuste para o novo formato de retorno.
+
+2. `salvarSku` agora também lê do FormData os campos `atacadoLarguraCm`, `atacadoAlturaCm` e
+   `atacadoProfundidadeCm` (mesmos nomes usados na importação CSV). Adicione esses três campos
+   ao formulário de cadastro/edição manual de SKU (inputs de texto/decimal, mesmo padrão dos
+   campos "unidLarguraCm" etc. já existentes), se ainda não existirem lá. Confirme antes no
+   schema do Prisma (model Sku) que esses campos realmente existem — se os nomes forem
+   diferentes, ajuste tanto o formulário quanto a action para bater com o schema real.
+
+3. `importarSkusCsv` agora retorna também `totalErros: number` (contagem completa de erros, sem
+   o corte de 50 itens). Atualize a UI que mostra o resultado da importação para exibir algo
+   como "Mostrando os primeiros 50 de {totalErros} erros" quando `totalErros > erros.length`.
+
+NOVA FUNCIONALIDADE — BOTÃO "BAIXAR MODELO" NA IMPORTAÇÃO DE CSV:
+
+Preciso de um botão/link na tela de importação de SKUs que baixe uma planilha modelo (.csv) já
+com o cabeçalho correto e uma linha de exemplo preenchida, para reduzir erros de formatação na
+hora do usuário preencher e reimportar.
+
+Antes de implementar, abra e leia @/lib/csv.ts (funções lerCsv e numeroBr) para confirmar:
+- Qual o delimitador de coluna usado (vírgula ou ponto-e-vírgula).
+- Como o cabeçalho é normalizado (acentos, maiúsculas, espaços) para garantir que o cabeçalho do
+  modelo gerado será reconhecido de volta pelo lerCsv.
+- O formato decimal esperado por numeroBr (provavelmente vírgula como separador decimal, no
+  padrão brasileiro).
+
+Com isso confirmado, crie uma Route Handler (ex: app/cadastros/skus/modelo/route.ts, ajuste o
+caminho para o padrão de rotas já usado no projeto) que:
+- Responda a GET.
+- Gere um CSV com o cabeçalho: codigo, descricao, grupo, categoria, fabricante, codigo_barras,
+  unid_largura_cm, unid_altura_cm, unid_profundidade_cm, atacado_largura_cm, atacado_altura_cm,
+  atacado_profundidade_cm, unidades_por_atacado — usando o delimitador correto encontrado em
+  lib/csv.ts.
+- Inclua 1 ou 2 linhas de exemplo já preenchidas com valores plausíveis (ex: um código de
+  produto fictício, descrição, dimensões no formato decimal correto) para servir de referência
+  visual de como preencher.
+- Inclua BOM UTF-8 no início do arquivo (\uFEFF) para o Excel abrir acentuação corretamente.
+- Retorne com headers:
+  Content-Type: text/csv; charset=utf-8
+  Content-Disposition: attachment; filename="modelo-importacao-skus.csv"
+
+Por fim, adicione um botão/link "Baixar planilha modelo" na tela/formulário de importação de
+CSV de SKUs, apontando para essa rota, posicionado antes do campo de upload do arquivo (para o
+usuário ver o modelo antes de tentar preencher).
+
+Depois de implementar tudo, rode o build/typecheck do projeto e me avise se algum tipo ou
+import precisar de ajuste manual meu.
