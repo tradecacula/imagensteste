@@ -1,0 +1,192 @@
+import { useEffect, useRef, useState } from "react";
+
+interface SegmentoConfig {
+  url: string;
+  rotate: boolean;
+  zoom: number;
+  autoHeight?: boolean;
+}
+
+const MAPA_KEY = "MAPA";
+
+const mapaConfig: Record<string, SegmentoConfig> = {
+  [MAPA_KEY]: {
+    url: "https://raw.githubusercontent.com/tradecacula/imagensteste/main/img/projetoApp/PET.webp",
+    rotate: false,
+    zoom: 1.0,
+  },
+  ARMARINHO: {
+    url: "https://raw.githubusercontent.com/tradecacula/imagensteste/main/img/projetoApp/PET-ARM.webp",
+    rotate: true,
+    zoom: 1.16,
+  },
+  ARTES: {
+    url: "https://raw.githubusercontent.com/tradecacula/imagensteste/main/img/projetoApp/PET-ART.webp",
+    rotate: true,
+    zoom: 0.9,
+  },
+  "CASA E DECORAÇÃO": {
+    url: "https://raw.githubusercontent.com/tradecacula/imagensteste/main/img/projetoApp/PET-CAS.webp",
+    rotate: true,
+    zoom: 0.95,
+    autoHeight: true,
+  },
+  "EMBALAGEM E DESCARTÁVEIS": {
+    url: "https://raw.githubusercontent.com/tradecacula/imagensteste/main/img/projetoApp/PET-D_E.webp",
+    rotate: true,
+    zoom: 1.05,
+  },
+  FESTA: {
+    url: "https://raw.githubusercontent.com/tradecacula/imagensteste/main/img/projetoApp/PET-FES.webp",
+    rotate: true,
+    zoom: 1.05,
+  },
+  PAPELARIA: {
+    url: "https://raw.githubusercontent.com/tradecacula/imagensteste/main/img/projetoApp/PET-PAP.webp",
+    rotate: true,
+    zoom: 1.1,
+  },
+  SAZONAL: {
+    url: "https://raw.githubusercontent.com/tradecacula/imagensteste/main/img/projetoApp/PET-SAZ.webp",
+    rotate: true,
+    zoom: 0.95,
+    autoHeight: true,
+  },
+  TECIDO: {
+    url: "https://raw.githubusercontent.com/tradecacula/imagensteste/main/img/projetoApp/PET-TEC.webp",
+    rotate: true,
+    zoom: 1.05,
+  },
+};
+
+// Ordem exibida no <select>, sem contar a opção "Mapa" (que só aparece depois de escolher um segmento)
+const segmentosOrdenados = [
+  "SAZONAL",
+  "CASA E DECORAÇÃO",
+  "FESTA",
+  "PAPELARIA",
+  "EMBALAGEM E DESCARTÁVEIS",
+  "ARMARINHO",
+  "ARTES",
+  "TECIDO",
+];
+
+export default function MapaSegmentos() {
+  const [segmentoAtual, setSegmentoAtual] = useState<string>(MAPA_KEY);
+  const [imagemVisivel, setImagemVisivel] = useState(true);
+  const [displayConfig, setDisplayConfig] = useState<SegmentoConfig>(
+    mapaConfig[MAPA_KEY]
+  );
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const noMapa = segmentoAtual === MAPA_KEY;
+
+  // Pré-carrega todas as imagens em segundo plano assim que o componente monta,
+  // para que a troca de segmento use o cache do navegador em vez de baixar na hora.
+  useEffect(() => {
+    Object.values(mapaConfig).forEach((item) => {
+      const img = new Image();
+      img.src = item.url;
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
+
+  function trocarSegmento(valor: string) {
+    setSegmentoAtual(valor);
+    setImagemVisivel(false);
+
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      setDisplayConfig(mapaConfig[valor]);
+      setImagemVisivel(true);
+    }, 250);
+  }
+
+  function voltarAoMapa() {
+    trocarSegmento(MAPA_KEY);
+  }
+
+  function handleSelectChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    trocarSegmento(e.target.value);
+  }
+
+  return (
+    <div className="h-full flex flex-col items-center gap-4 bg-[#F7F6F3] p-4 font-sans text-[#2B2A28]">
+      {/* Botão de voltar */}
+      <button
+        onClick={voltarAoMapa}
+        title="Voltar ao mapa"
+        className={`fixed top-5 left-5 z-10 h-[42px] w-[42px] items-center justify-center rounded-full border border-[#D8D5CE] bg-white shadow-[0_4px_14px_rgba(0,0,0,0.12)] transition-all hover:border-[#B8B4AA] hover:scale-105 ${
+          noMapa ? "hidden" : "flex"
+        }`}
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="h-5 w-5 stroke-[#2B2A28]"
+        >
+          <path d="M19 12H5M12 19l-7-7 7-7" />
+        </svg>
+      </button>
+
+      {/* Painel de seleção de segmentos */}
+      <div className="flex items-center justify-center gap-3">
+        <label
+          htmlFor="segmentos"
+          className="whitespace-nowrap font-semibold text-sm tracking-wide text-[#4A4844]"
+        >
+          Segmentos
+        </label>
+        <select
+          id="segmentos"
+          name="segmentos"
+          value={noMapa ? "" : segmentoAtual}
+          onChange={handleSelectChange}
+          className="min-w-[240px] cursor-pointer rounded-lg border border-[#D8D5CE] bg-white px-3 py-2.5 text-[15px] font-medium text-[#2B2A28] outline-none transition-colors hover:border-[#B8B4AA] focus:border-[#8A8578] focus:shadow-[0_0_0_3px_rgba(138,133,120,0.15)]"
+        >
+          <option value="" disabled hidden>
+            Selecione uma categoria
+          </option>
+          {!noMapa && <option value={MAPA_KEY}>Mapa</option>}
+          {segmentosOrdenados.map((seg) => (
+            <option key={seg} value={seg}>
+              {seg}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Área do mapa */}
+      <div className="relative w-full max-w-[1200px] flex-1 min-h-0 overflow-hidden rounded-[10px] bg-white shadow-[0_4px_14px_rgba(0,0,0,0.12)]">
+        <img
+          src={displayConfig.url}
+          alt={segmentoAtual}
+          className={`absolute transition-opacity duration-250 ease-in-out object-cover ${
+            imagemVisivel ? "opacity-100" : "opacity-0"
+          } ${
+            displayConfig.rotate
+              ? "top-1/2 left-1/2 w-[56.25%]"
+              : "top-0 left-0 w-full h-full"
+          } ${displayConfig.rotate && displayConfig.autoHeight ? "h-auto" : ""} ${
+            displayConfig.rotate && !displayConfig.autoHeight
+              ? "h-[177.7778%]"
+              : ""
+          }`}
+          style={{
+            transform: displayConfig.rotate
+              ? `translate(-50%, -50%) rotate(90deg) scale(${displayConfig.zoom})`
+              : `scale(${displayConfig.zoom})`,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
